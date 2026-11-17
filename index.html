@@ -1,1 +1,158 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cryptofluxx</title>
+<style>
+:root{--bg:#eef2ef;--card:#fff;--ink:#14211b;--mute:#5d6d64;--line:#d5ddd8;--acc:#0f5c4d;--onacc:#fff;--neg:#b3372e}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1713;--card:#18231d;--ink:#e6efe9;--mute:#93a59b;--line:#2b3a32;--acc:#4fd1ae;--onacc:#06241c;--neg:#ff8a7d}}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:520px;padding:16px 16px 40px;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif}
+h1{font-size:20px;margin:0}
+input,select,button{font:inherit;color:var(--ink)}
+input,select{width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+button{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:11px 16px;font-weight:600;cursor:pointer}
+button.p{background:var(--acc);color:var(--onacc);border-color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.big{font-size:44px;font-weight:700;letter-spacing:-.02em;margin:6px 0}
+.mute,.sub{color:var(--mute)}.sub{font-size:13px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid var(--line)}
+.r{text-align:right}.pos{color:var(--acc)}.neg{color:var(--neg)}
+form{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:14px 0;display:grid;gap:10px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.acts{display:flex;gap:10px;margin:16px 0}.acts button{flex:1}
+nav{display:flex;border-bottom:1px solid var(--line)}
+nav button{flex:1;border:0;border-bottom:3px solid transparent;border-radius:0;background:none;color:var(--mute)}
+nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--acc)}
+.msg{min-height:20px;font-size:14px;color:var(--neg)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+
+<section id="auth" hidden>
+  <h1>Cryptofluxx</h1>
+  <form id="af">
+    <input id="em" type="email" placeholder="Email" autocomplete="email" required>
+    <input id="pw" type="password" placeholder="Password (8+ characters)" autocomplete="current-password" minlength="8" required>
+    <div class="msg" id="am" role="alert"></div>
+    <div class="two"><button type="button" id="su">Create account</button><button class="p" type="submit">Sign in</button></div>
+  </form>
+</section>
+
+<section id="app" hidden>
+  <header><h1 id="hi"></h1><button id="so">Sign out</button></header>
+  <div class="mute" style="margin-top:18px">Total balance</div>
+  <div class="big" id="tot"></div>
+  <div class="acts"><button class="p" id="bd">Deposit</button><button id="bw">Withdraw</button></div>
+  <form id="tf" hidden>
+    <strong id="th"></strong>
+    <div class="two"><select id="ta" aria-label="Asset"></select><input id="tm" type="number" step="any" min="0" placeholder="Amount" aria-label="Amount"></div>
+    <div class="msg" id="tmsg" role="alert"></div>
+    <div class="two"><button type="button" id="tc">Cancel</button><button class="p" type="submit">Confirm</button></div>
+  </form>
+  <nav><button data-t="bal" aria-selected="true">Balances</button><button data-t="tx" aria-selected="false">Activity</button><button data-t="adm" aria-selected="false" id="tadm" hidden>Admin</button></nav>
+  <section id="v"></section>
+</section>
+
+<script>
+const SUPABASE_URL = "https://sjprehcziwojcilpzenw.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_i-uQyzEbrZUzDIq-lD2VmQ_wbuL6MDF";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (n, d) => Number(n).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
+const usd = n => "$" + fmt(n, 2);
+const when = t => new Date(t).toLocaleString(undefined, {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
+let S = {user:null, profile:null, assets:[], bal:[], tx:[], logs:[], people:[], tab:"bal", mode:null};
+
+async function load() {
+  const uid = S.user.id;
+  const [p, a, b, t] = await Promise.all([
+    sb.from("profiles").select("*").eq("id", uid).single(),
+    sb.from("assets").select("*").order("id"),
+    sb.from("balances").select("*").eq("profile_id", uid),
+    sb.from("transactions").select("*").eq("profile_id", uid).order("created_at", {ascending:false}).limit(50)
+  ]);
+  S.profile = p.data; S.assets = a.data || []; S.bal = b.data || []; S.tx = t.data || [];
+  if (S.profile?.role === "admin") {
+    const [l, pp] = await Promise.all([
+      sb.from("admin_audit_logs").select("*").order("created_at", {ascending:false}).limit(50),
+      sb.from("profiles").select("id,display_name").eq("role", "user")
+    ]);
+    S.logs = l.data || []; S.people = pp.data || [];
+  }
+  render();
+}
+
+function render() {
+  const signedIn = !!S.user;
+  $("auth").hidden = signedIn; $("app").hidden = !signedIn;
+  if (!signedIn || !S.profile) return;
+  const isAdmin = S.profile.role === "admin";
+  $("tadm").hidden = !isAdmin; if (!isAdmin && S.tab === "adm") S.tab = "bal";
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", b.dataset.t === S.tab));
+  $("hi").textContent = S.profile.display_name || "Cryptofluxx";
+  const amt = id => Number(S.bal.find(x => x.asset_id === id)?.amount || 0);
+  $("tot").textContent = usd(S.assets.reduce((s, a) => s + amt(a.id) * Number(a.price_usd), 0));
+  $("v").innerHTML = S.tab === "bal" ? S.assets.map(a => `<div class="row"><div><b>${esc(a.symbol)}</b><div class="sub">${usd(a.price_usd)} each</div></div><div class="r"><b>${fmt(amt(a.id), a.decimals)}</b><div class="sub">${usd(amt(a.id) * a.price_usd)}</div></div></div>`).join("")
+    : S.tab === "tx" ? (S.tx.length ? S.tx.map(x => { const a = S.assets.find(y => y.id === x.asset_id) || {symbol:"", decimals:2}, neg = x.type === "withdraw";
+        return `<div class="row"><div><b>${esc(x.type.replace("_"," "))}</b><div class="sub">${when(x.created_at)}</div></div><div class="r ${neg?"neg":"pos"}"><b>${neg?"−":"+"}${fmt(x.amount, a.decimals)} ${esc(a.symbol)}</b></div></div>`; }).join("")
+        : `<p class="mute">No activity yet. Make a deposit to get started.</p>`)
+    : adminView();
+  if (S.tab === "adm") $("cf").onsubmit = credit;
+}
+
+function adminView() {
+  return `<form id="cf"><strong>Credit a user</strong>
+    <select id="cp" aria-label="User">${S.people.map(p => `<option value="${esc(p.id)}">${esc(p.display_name)}</option>`).join("")}</select>
+    <div class="two"><select id="ca" aria-label="Asset">${S.assets.map(a => `<option value="${a.id}">${esc(a.symbol)}</option>`).join("")}</select><input id="cm" type="number" step="any" min="0" placeholder="Amount" aria-label="Amount"></div>
+    <div class="msg" id="cmsg" role="alert"></div><button class="p" type="submit">Credit account</button></form>`
+    + (S.logs.length ? S.logs.map(l => `<div class="row"><div><b>${esc(l.action)}</b><div class="sub">${esc(l.detail)}</div></div><div class="r sub">${when(l.created_at)}</div></div>`).join("") : `<p class="mute">No admin actions yet.</p>`);
+}
+
+async function credit(e) {
+  e.preventDefault();
+  const {error} = await sb.rpc("admin_credit", {p_target: $("cp").value, p_asset: +$("ca").value, p_amount: parseFloat($("cm").value)});
+  if (error) { $("cmsg").textContent = error.message; return; }
+  load();
+}
+
+$("af").onsubmit = async e => {
+  e.preventDefault();
+  const {error} = await sb.auth.signInWithPassword({email: $("em").value, password: $("pw").value});
+  $("am").textContent = error ? error.message : "";
+};
+$("su").onclick = async () => {
+  const {error} = await sb.auth.signUp({email: $("em").value, password: $("pw").value});
+  $("am").textContent = error ? error.message : "Check your email to confirm your account, then sign in.";
+};
+$("so").onclick = () => sb.auth.signOut();
+$("bd").onclick = () => openForm("deposit");
+$("bw").onclick = () => openForm("withdraw");
+$("tc").onclick = () => { $("tf").hidden = true; };
+function openForm(m) {
+  S.mode = m; $("th").textContent = m === "deposit" ? "Deposit" : "Withdraw";
+  $("ta").innerHTML = S.assets.map(a => `<option value="${a.id}">${esc(a.symbol)}</option>`).join("");
+  $("tm").value = ""; $("tmsg").textContent = ""; $("tf").hidden = false; $("tm").focus();
+}
+$("tf").onsubmit = async e => {
+  e.preventDefault();
+  const {error} = await sb.rpc("apply_transaction", {p_asset: +$("ta").value, p_type: S.mode, p_amount: parseFloat($("tm").value)});
+  if (error) { $("tmsg").textContent = error.message.includes("balances_amount_check") ? "That is more than your balance." : error.message; return; }
+  $("tf").hidden = true; S.tab = "tx"; load();
+};
+document.querySelector("nav").onclick = e => { if (e.target.dataset.t) { S.tab = e.target.dataset.t; render(); } };
+
+sb.auth.onAuthStateChange((_ev, session) => {
+  S.user = session?.user || null;
+  if (S.user) load(); else { S.profile = null; render(); }
+});
+</script>
+</body>
+</html>
